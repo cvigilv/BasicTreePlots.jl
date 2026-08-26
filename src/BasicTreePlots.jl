@@ -24,7 +24,6 @@ export treeplot,
     theme_empty
 
 
-
 # Documentation for plotting functions are in extensions
 function treeplot end
 function treeplot! end
@@ -109,14 +108,14 @@ end
 """
 function ladderize(t; rev = false)
     new_t = deepcopy(t)
-    ladderize!(new_t; rev)
+    return ladderize!(new_t; rev)
 end
 function ladderize(fun, agg, t; rev = false)
     new_t = deepcopy(t)
-    ladderize!(fun, agg, new_t; rev)
+    return ladderize!(fun, agg, new_t; rev)
 end
 function ladderize!(t; rev = false)
-    ladderize!(n->1, sum, t; rev)
+    return ladderize!(n -> 1, sum, t; rev)
 end
 function ladderize!(fun::Function, agg::Function, t; rev = false)
     function walk!(n)
@@ -134,22 +133,21 @@ function ladderize!(fun::Function, agg::Function, t; rev = false)
 end
 
 
-
 function nodepositions(tree; kwargs...)
-    nodedict = OrderedDict{Any,Tuple{Float32,Float32}}()
-    nodepositions!(nodedict, tree; kwargs...)
+    nodedict = OrderedDict{Any, Tuple{Float32, Float32}}()
+    return nodepositions!(nodedict, tree; kwargs...)
 end
 function nodepositions(coordtype::Type, tree; kwargs...)
-    nodedict = OrderedDict{Any,coordtype}()
-    nodepositions!(nodedict, tree; kwargs...)
+    nodedict = OrderedDict{Any, coordtype}()
+    return nodepositions!(nodedict, tree; kwargs...)
 end
 function nodepositions!(
-    nodedict,
-    tree;
-    showroot = false,
-    layoutstyle = :dendrogram,
-    nodeoffset = 0.0f0,
-)
+        nodedict,
+        tree;
+        showroot = false,
+        layoutstyle = :dendrogram,
+        nodeoffset = 0.0f0,
+    )
     currdepth = showroot ? distance(tree) : 0.0f0
     leafcount = [0.0f0 + nodeoffset]
     if layoutstyle == :dendrogram
@@ -209,6 +207,7 @@ function coord_positions_unrooted!(nodedict, tree; cladogram::Bool = false)
             recurse!(child, cx, cy, θ_cursor, θ_cursor + Δθ)
             θ_cursor += Δθ
         end
+        return
     end
     recurse!(tree, 0.0f0, 0.0f0, 0.0f0, 2.0f0 * Float32(π))
     return nodedict
@@ -222,11 +221,12 @@ function extend_tips!(nodecoords)
             nodecoords[k] = (maxleafposition[1], v[2])
         end
     end
+    return
 end
 
 
 function makesegments(nodedict, tree; resolution = 25, branchstyle = :square, layoutstyle = :dendrogram)
-    segs = Vector{Vector{Tuple{Float32,Float32}}}()
+    segs = Vector{Vector{Tuple{Float32, Float32}}}()
     if layoutstyle in (:unrooted_dendrogram, :unrooted_cladogram)
         make_unrooted_segments!(segs, nodedict, tree)
     elseif branchstyle == :square
@@ -267,14 +267,14 @@ function make_square_segments!(segs, nodedict, tree; resolution = 25)
             )
         end
 
-        if !isleaf(node)
+        return if !isleaf(node)
             for c in children(node)
                 segment_prewalk!(segs, c, node)
             end
         end
     end
     segment_prewalk!(segs, tree, tree)
-    segs
+    return segs
 end
 
 
@@ -289,20 +289,20 @@ function make_straight_segments!(segs, nodedict, tree)
             push!(segs, [(px, py), (cx, cy), (NaN, NaN)])
         end
 
-        if !isleaf(node)
+        return if !isleaf(node)
             for c in children(node)
                 segment_prewalk!(segs, c, node)
             end
         end
     end
     segment_prewalk!(segs, tree, tree)
-    segs
+    return segs
 end
 
 
 function make_unrooted_segments!(segs, nodedict, tree)
     function segment_prewalk!(node)
-        if !isleaf(node)
+        return if !isleaf(node)
             px, py = nodedict[node]
             for c in children(node)
                 cx, cy = nodedict[c]
@@ -312,13 +312,13 @@ function make_unrooted_segments!(segs, nodedict, tree)
         end
     end
     segment_prewalk!(tree)
-    segs
+    return segs
 end
 
 
 function tipannotations(nodedict)
     res = [(k, v, label(k)) for (k, v) in nodedict if isleaf(k)]
-    first.(res), getindex.(res, 2), last.(res)
+    return first.(res), getindex.(res, 2), last.(res)
 end
 
 polaroffset(pos, off) = off[2] .* (cos(pos[1] + off[1]), sin(pos[1] + off[1]))
