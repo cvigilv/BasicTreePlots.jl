@@ -457,6 +457,9 @@ end
 
 
 function make_unrooted_segments!(segs, nodedict, tree)
+    root_x, root_y = nodedict[tree]
+    push!(segs, [(root_x, root_y), (root_x, root_y), (NaN32, NaN32)])
+
     function segment_prewalk!(node)
         return if !isleaf(node)
             px, py = nodedict[node]

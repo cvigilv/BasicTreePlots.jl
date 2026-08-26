@@ -183,10 +183,17 @@ function Makie.plot!(plt::TreePlot)
         )
 
 
+        is_unrooted = layoutstyle in BasicTreePlots.UNROOTED_LAYOUTS
+        maxtreedepth = if is_unrooted
+            root_x, root_y = nodepoints[tree]
+            maximum(values(nodepoints)) do (x, y)
+                hypot(x - root_x, y - root_y)
+            end
+        else
+            maximum(x -> x[1], values(nodepoints))
+        end
 
-        maxtreedepth = maximum(x -> x[1], values(nodepoints))
-
-        if usemaxdepth
+        if usemaxdepth && !is_unrooted
             foreach(PreOrderDFS(tree)) do node
                 if BasicTreePlots.isleaf(node)
                     (x, y) = nodepoints[node]
@@ -197,11 +204,11 @@ function Makie.plot!(plt::TreePlot)
 
         branchsegments = BasicTreePlots.makesegments(nodepoints, tree; branchstyle, resolution, layoutstyle)
 
-        is_unrooted = layoutstyle in (:unrooted_dendrogram, :unrooted_cladogram)
-
         if is_unrooted
             if tf isa Polar
-                error("Unrooted layouts (:unrooted_dendrogram, :unrooted_cladogram) are not compatible with PolarAxis. Use a regular Axis instead.")
+                error(
+                    "Unrooted and daylight layouts are not compatible with PolarAxis. Use a regular Axis instead."
+                )
             end
             if orientation !== :right
                 @warn "orientation=$orientation is ignored for unrooted layouts"
