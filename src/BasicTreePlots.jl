@@ -8,7 +8,21 @@ using OrderedCollections: OrderedDict
 # using Makie: Point2f
 
 
-const LAYOUTS = (:dendrogram, :cladogram, :radial, :unrooted_dendrogram, :unrooted_cladogram)
+const LAYOUTS = (
+    :dendrogram,
+    :cladogram,
+    :radial,
+    :unrooted_dendrogram,
+    :unrooted_cladogram,
+    :daylight_dendrogram,
+    :daylight_cladogram,
+)
+const UNROOTED_LAYOUTS = (
+    :unrooted_dendrogram,
+    :unrooted_cladogram,
+    :daylight_dendrogram,
+    :daylight_cladogram,
+)
 const BRANCHTYPES = (:square, :straight)
 
 export treeplot,
@@ -158,6 +172,10 @@ function nodepositions!(
         coord_positions_unrooted!(nodedict, tree; cladogram = false)
     elseif layoutstyle == :unrooted_cladogram
         coord_positions_unrooted!(nodedict, tree; cladogram = true)
+    elseif layoutstyle == :daylight_dendrogram
+        coord_positions_daylight!(nodedict, tree; cladogram = false)
+    elseif layoutstyle == :daylight_cladogram
+        coord_positions_daylight!(nodedict, tree; cladogram = true)
     else
         throw(ArgumentError("""layoutstyle $layoutstyle not in $LAYOUTS"""))
     end
@@ -214,6 +232,144 @@ function coord_positions_unrooted!(nodedict, tree; cladogram::Bool = false)
 end
 
 
+function coord_positions_daylight!(
+    nodedict,
+    tree;
+    cladogram::Bool = false,
+    max_iterations::Int = 5,
+    tolerance::Float32 = 0.05f0 * Float32(π),
+)
+    coord_positions_unrooted!(nodedict, tree; cladogram)
+    adjust_daylight!(nodedict, tree; max_iterations, tolerance)
+    return nodedict
+end
+
+
+function adjust_daylight!(
+    nodedict,
+    tree;
+    max_iterations::Int = 5,
+    tolerance::Float32 = 0.05f0 * Float32(π),
+)
+    all_nodes = collect(PreOrderDFS(tree))
+    internal_nodes = Any[]
+    queue = Any[tree]
+    cursor = 1
+    while cursor <= length(queue)
+        node = queue[cursor]
+        cursor += 1
+        node_children = collect(children(node))
+        if !isempty(node_children)
+            push!(internal_nodes, node)
+            append!(queue, node_children)
+        end
+    end
+
+    components = Dict{Any,Vector{Vector{Any}}}()
+    all_nodes_set = Set(all_nodes)
+    for node in internal_nodes
+        node_components = Vector{Vector{Any}}()
+        covered = Set{Any}([node])
+        for child in children(node)
+            component = Any[PreOrderDFS(child)...]
+            push!(node_components, component)
+            union!(covered, component)
+        end
+        if node != tree
+            parent_component = Any[n for n in all_nodes_set if n ∉ covered]
+            !isempty(parent_component) && push!(node_components, parent_component)
+        end
+        components[node] = node_components
+    end
+
+    for _ in 1:max_iterations
+        total_change = 0.0f0
+        changed_nodes = 0
+        for node in internal_nodes
+            node_components = components[node]
+            length(node_components) <= 2 && continue
+            arcs = map(node_components) do component
+                daylight_arc(nodedict, node, component)
+            end
+            order = sortperm(first.(arcs))
+            widths = last.(arcs)
+            daylight = (2.0f0 * Float32(π) - sum(widths)) / length(arcs)
+            desired_start = first(arcs[order[begin]])
+            max_change = 0.0f0
+            for order_index in 2:length(order)
+                previous = order[order_index - 1]
+                current = order[order_index]
+                desired_start += widths[previous] + daylight
+                raw_adjustment = desired_start - first(arcs[current])
+                adjustment = mod(
+                    raw_adjustment + Float32(π), 2.0f0 * Float32(π)
+                ) - Float32(π)
+                rotate_component!(nodedict, node, node_components[current], adjustment)
+                max_change = max(max_change, abs(adjustment))
+            end
+            total_change += max_change
+            changed_nodes += 1
+        end
+        changed_nodes == 0 && break
+        total_change / changed_nodes <= tolerance && break
+    end
+
+    root_x, root_y = nodedict[tree]
+    for node in all_nodes
+        x, y = nodedict[node]
+        nodedict[node] = (Float32(x - root_x), Float32(y - root_y))
+    end
+    return nodedict
+end
+
+
+function daylight_arc(nodedict, origin, component)
+    ox, oy = nodedict[origin]
+    angles = Float32[]
+    for node in component
+        x, y = nodedict[node]
+        dx = Float32(x - ox)
+        dy = Float32(y - oy)
+        iszero(dx) && iszero(dy) && continue
+        push!(angles, mod(Float32(atan(dy, dx)), 2.0f0 * Float32(π)))
+    end
+    isempty(angles) && return (0.0f0, 0.0f0)
+    length(angles) == 1 && return (only(angles), 0.0f0)
+
+    sort!(angles)
+    largest_gap = -1.0f0
+    gap_index = 0
+    for i in eachindex(angles)
+        next_angle = i == lastindex(angles) ? first(angles) + 2.0f0 * Float32(π) : angles[i + 1]
+        gap = next_angle - angles[i]
+        if gap > largest_gap
+            largest_gap = gap
+            gap_index = i
+        end
+    end
+    start_index = gap_index == lastindex(angles) ? firstindex(angles) : gap_index + 1
+    start_angle = angles[start_index]
+    width = 2.0f0 * Float32(π) - largest_gap
+    return (start_angle, width)
+end
+
+
+function rotate_component!(nodedict, pivot, component, angle)
+    px, py = nodedict[pivot]
+    sine, cosine = sincos(angle)
+    for node in component
+        x, y = nodedict[node]
+        dx = x - px
+        dy = y - py
+        nodedict[node] = (
+            Float32(cosine * dx - sine * dy + px),
+            Float32(sine * dx + cosine * dy + py),
+        )
+    end
+    return nodedict
+end
+
+
 function extend_tips!(nodecoords)
     maxleafposition = argmax(x -> x[1], values(nodecoords))
     for (k, v) in nodecoords
@@ -227,7 +383,7 @@ end
 
 function makesegments(nodedict, tree; resolution = 25, branchstyle = :square, layoutstyle = :dendrogram)
     segs = Vector{Vector{Tuple{Float32, Float32}}}()
-    if layoutstyle in (:unrooted_dendrogram, :unrooted_cladogram)
+    if layoutstyle in UNROOTED_LAYOUTS
         make_unrooted_segments!(segs, nodedict, tree)
     elseif branchstyle == :square
         make_square_segments!(segs, nodedict, tree; resolution)
