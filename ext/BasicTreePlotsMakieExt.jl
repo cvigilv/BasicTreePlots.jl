@@ -866,6 +866,15 @@ fig
     """
     nodes = nothing
 
+    "Branch geometry from the parent tree plot. Forwarded automatically from `treeplot`."
+    branchsegments = nothing
+
+    "Tree root node. Forwarded automatically from `treeplot`."
+    tree = nothing
+
+    "Layout style of the parent tree plot. Forwarded automatically from `treeplot`."
+    treelayoutstyle = :dendrogram
+
     # Fill
     """
     Padding value to expand region around clade. Expects `(root_edge, leave_edge, first_leaf_edge, last_leaf_edge)`.
@@ -875,8 +884,8 @@ fig
     """
     padding = 0.1f0
     """
-       Sets the color of the tree area.
-       """
+    Sets the color of the tree area.
+    """
     color = @inherit patchcolor
     """
        Sets the alpha value of the shaded region in the tree area.
@@ -906,27 +915,165 @@ fig
     Makie.mixin_generic_plot_attributes()...
 end
 
+function _convex_hull(points)
+    hull_points = unique(Point2f.(points))
+    length(hull_points) <= 1 && return hull_points
+    sort!(hull_points; by = point -> (point[1], point[2]))
+
+    cross(origin, a, b) =
+        (a[1] - origin[1]) * (b[2] - origin[2]) -
+        (a[2] - origin[2]) * (b[1] - origin[1])
+
+    lower = Point2f[]
+    for point in hull_points
+        while length(lower) >= 2 && cross(lower[end - 1], lower[end], point) <= 0
+            pop!(lower)
+        end
+        push!(lower, point)
+    end
+
+    upper = Point2f[]
+    for point in Iterators.reverse(hull_points)
+        while length(upper) >= 2 && cross(upper[end - 1], upper[end], point) <= 0
+            pop!(upper)
+        end
+        push!(upper, point)
+    end
+
+    pop!(lower)
+    pop!(upper)
+    return append!(lower, upper)
+end
+
+function _arc_points(center, radius, start_angle, end_angle, resolution)
+    while end_angle < start_angle
+        end_angle += 2.0f0 * Float32(π)
+    end
+    return Point2f[
+        center + radius * Point2f(cos(angle), sin(angle)) for
+            angle in range(start_angle, end_angle; length = max(resolution, 2) + 1)
+    ]
+end
+
+function _rounded_hull(hull, padding, resolution)
+    coordinate_scale = maximum(point -> max(abs(point[1]), abs(point[2])), hull; init = 1.0f0)
+    radius = max(Float32(padding), sqrt(eps(Float32)) * coordinate_scale)
+
+    if length(hull) == 1
+        center = only(hull)
+        angles = range(0.0f0, 2.0f0 * Float32(π); length = max(resolution, 3) + 1)
+        return Point2f[
+            center + radius * Point2f(cos(angle), sin(angle)) for angle in angles
+        ]
+    elseif length(hull) == 2
+        first_point, last_point = hull
+        dx = last_point[1] - first_point[1]
+        dy = last_point[2] - first_point[2]
+        segment_length = hypot(dx, dy)
+        iszero(segment_length) && return _rounded_hull(hull[begin:begin], padding, resolution)
+        segment_angle = Float32(atan(dy, dx))
+        first_arc = _arc_points(
+            last_point,
+            radius,
+            segment_angle - Float32(π) / 2,
+            segment_angle + Float32(π) / 2,
+            resolution,
+        )
+        last_arc = _arc_points(
+            first_point,
+            radius,
+            segment_angle + Float32(π) / 2,
+            segment_angle + 3.0f0 * Float32(π) / 2,
+            resolution,
+        )
+        return append!(first_arc, last_arc)
+    end
+
+    expanded = Point2f[]
+    for index in eachindex(hull)
+        previous = hull[mod1(index - 1, length(hull))]
+        vertex = hull[index]
+        following = hull[mod1(index + 1, length(hull))]
+
+        previous_dx = vertex[1] - previous[1]
+        previous_dy = vertex[2] - previous[2]
+        following_dx = following[1] - vertex[1]
+        following_dy = following[2] - vertex[2]
+        previous_length = hypot(previous_dx, previous_dy)
+        following_length = hypot(following_dx, following_dy)
+        previous_normal = Point2f(previous_dy, -previous_dx) / previous_length
+        following_normal = Point2f(following_dy, -following_dx) / following_length
+        start_angle = Float32(atan(previous_normal[2], previous_normal[1]))
+        end_angle = Float32(atan(following_normal[2], following_normal[1]))
+        append!(expanded, _arc_points(vertex, radius, start_angle, end_angle, resolution))
+    end
+    return expanded
+end
+
+function _unrooted_clade_geometry(nodepoints, branchsegments, tree, node)
+    clade_nodes = collect(PreOrderDFS(node))
+    points = Point2f[nodepoints[clade_node] for clade_node in clade_nodes]
+    isnothing(branchsegments) && return points
+
+    segment_by_node = Dict(
+        full_tree_node => segment for
+            (full_tree_node, segment) in zip(PreOrderDFS(tree), branchsegments)
+    )
+    for clade_node in Iterators.drop(clade_nodes, 1)
+        for point in get(segment_by_node, clade_node, ())
+            all(isfinite, point) && push!(points, Point2f(point))
+        end
+    end
+    return points
+end
+
 # I think this covers the main ways of calling the functions with a treeplot directly
-treehilight!(plt::TreePlot; kwargs...) = treehilight!(plt.nodepoints; kwargs...)
-treehilight(plt::TreePlot; kwargs...) = treehilight(plt.nodepoints; kwargs...)
-treehilight!(ax::Union{Makie.Block,Makie.GridPosition}, plt::TreePlot; kwargs...) =
-    treehilight!(ax, plt.nodepoints; kwargs...)
-treehilight(ax::Union{Makie.Block,Makie.GridPosition}, plt::TreePlot; kwargs...) =
-    treehilight(ax, plt.nodepoints; kwargs...)
+_treehilight_kwargs(plt::TreePlot) = (;
+    branchsegments = plt.branchsegments,
+    tree = plt.tree,
+    treelayoutstyle = plt.layoutstyle,
+)
+treehilight!(plt::TreePlot; kwargs...) =
+    treehilight!(plt.nodepoints; _treehilight_kwargs(plt)..., kwargs...)
+treehilight(plt::TreePlot; kwargs...) =
+    treehilight(plt.nodepoints; _treehilight_kwargs(plt)..., kwargs...)
+treehilight!(ax::Union{Makie.Block, Makie.GridPosition}, plt::TreePlot; kwargs...) =
+    treehilight!(ax, plt.nodepoints; _treehilight_kwargs(plt)..., kwargs...)
+treehilight(ax::Union{Makie.Block, Makie.GridPosition}, plt::TreePlot; kwargs...) =
+    treehilight(ax, plt.nodepoints; _treehilight_kwargs(plt)..., kwargs...)
 function Makie.plot!(plt::TreeHilight)
     map!(
         plt.attributes,
-        [:nodepoints, :nodes, :resolution, :padding, :transform_func],
+        [
+            :nodepoints,
+            :branchsegments,
+            :tree,
+            :treelayoutstyle,
+            :nodes,
+            :resolution,
+            :padding,
+            :transform_func,
+        ],
         [:clade_regions],
-    ) do nodepoints, nodes, resolution, padding, tf
+    ) do nodepoints, branchsegments, tree, treelayoutstyle, nodes, resolution, padding, tf
 
         # if no nodes provided use root
-        nodes = isnothing(nodes) ? [first(last(nodepoints))] : nodes
+        is_unrooted = treelayoutstyle in BasicTreePlots.UNROOTED_LAYOUTS
+        if isnothing(tree)
+            tree = is_unrooted ? first(keys(nodepoints)) : first(last(nodepoints))
+        end
+        nodes = isnothing(nodes) ? [tree] : nodes
 
         # expand padding to root, leaves, leftwidth, rightwidth directions
         padding = Makie.to_lrbt_padding(padding)
 
         clade_regions = map(nodes) do node
+            if is_unrooted
+                points = _unrooted_clade_geometry(nodepoints, branchsegments, tree, node)
+                hull = _convex_hull(points)
+                radial_padding = maximum(padding)
+                return Polygon(_rounded_hull(hull, radial_padding, resolution))
+            end
 
             ## Get bounding box coordinates
             amin, amax = extrema(n -> first(nodepoints[n]), PreOrderDFS(node))
@@ -943,24 +1090,22 @@ function Makie.plot!(plt::TreeHilight)
 
             clade_region = Point2f[
                 (depthmin, widthmin),
-                ((depthmin, i) for i ∈ range(widthmin, widthmax, resolution))...,
+                ((depthmin, i) for i in range(widthmin, widthmax, resolution))...,
                 (depthmin, widthmax),
                 (depthmax, widthmax),
-                ((depthmax, i) for i ∈ range(widthmax, widthmin, resolution))...,
+                ((depthmax, i) for i in range(widthmax, widthmin, resolution))...,
                 (depthmax, widthmin),
                 (depthmin, widthmin),
             ]
-            clade_region =
-                tf isa Polar ? Polygon(reverse.(clade_region)) : Polygon(clade_region)
-            return clade_region
+            return tf isa Polar ? Polygon(reverse.(clade_region)) : Polygon(clade_region)
         end
         clade_regions = length(clade_regions) == 1 ? only(clade_regions) : clade_regions
         return (clade_regions,)
     end
 
 
-    p = Makie.poly!(plt, plt.attributes, plt.clade_regions;)
-    Makie.translate!(p, 0, 0, plt.z_shift[])
+    p = Makie.poly!(plt, plt.attributes, plt.clade_regions)
+    return Makie.translate!(p, 0, 0, plt.z_shift[])
 end
 
 # # themes ======================================================================================
