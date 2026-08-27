@@ -734,6 +734,15 @@ fig
     """
     cladelabels = nothing
 
+    "Branch geometry from the parent tree plot. Forwarded automatically from `treeplot`."
+    branchsegments = nothing
+
+    "Tree root node. Forwarded automatically from `treeplot`."
+    tree = nothing
+
+    "Layout style of the parent tree plot. Forwarded automatically from `treeplot`."
+    treelayoutstyle = :dendrogram
+
     # Line options
     """
     Offset in data space at which to draw the line indicating the clade being labeled.
@@ -761,16 +770,146 @@ end
 
 _unzip(a) = collect(getfield.(a, fld) for fld in fieldnames(eltype(a)))
 
+function _minimum_angular_span(points, center)
+    angles = Float32[]
+    for point in points
+        dx = point[1] - center[1]
+        dy = point[2] - center[2]
+        iszero(dx) && iszero(dy) && continue
+        push!(angles, mod(Float32(atan(dy, dx)), 2.0f0 * Float32(π)))
+    end
+    isempty(angles) && return (0.0f0, 0.0f0)
+    length(angles) == 1 && return (only(angles), 0.0f0)
+
+    sort!(angles)
+    largest_gap, gap_index = findmax(eachindex(angles)) do index
+        next_angle = index == lastindex(angles) ? first(angles) + 2.0f0 * Float32(π) : angles[index + 1]
+        next_angle - angles[index]
+    end
+    start_index = gap_index == lastindex(angles) ? firstindex(angles) : gap_index + 1
+    return (angles[start_index], 2.0f0 * Float32(π) - largest_gap)
+end
+
+function _terminal_branch_rays(nodepoints, branchsegments, tree, node)
+    parent_of = Dict{Any,Any}()
+    for parent_node in PreOrderDFS(tree)
+        for child in children(parent_node)
+            parent_of[child] = parent_node
+        end
+    end
+
+    segment_by_node = if isnothing(branchsegments)
+        Dict{Any,Any}()
+    else
+        Dict(
+            full_tree_node => segment for
+                (full_tree_node, segment) in zip(PreOrderDFS(tree), branchsegments)
+        )
+    end
+
+    rays = Tuple{Point2f,Point2f}[]
+    for leaf in Iterators.filter(BasicTreePlots.isleaf, PreOrderDFS(node))
+        segment = get(segment_by_node, leaf, ())
+        finite_segment = Point2f[Point2f(point) for point in segment if all(isfinite, point)]
+        if length(finite_segment) >= 2
+            ray_origin = finite_segment[end - 1]
+            ray_tip = finite_segment[end]
+        elseif haskey(parent_of, leaf)
+            ray_origin = nodepoints[parent_of[leaf]]
+            ray_tip = nodepoints[leaf]
+        else
+            continue
+        end
+
+        direction = ray_tip - ray_origin
+        direction_norm = hypot(direction[1], direction[2])
+        iszero(direction_norm) && continue
+        push!(rays, (ray_tip, direction / direction_norm))
+    end
+
+    if isempty(rays)
+        clade_center = nodepoints[node]
+        tree_center = nodepoints[tree]
+        direction = clade_center - tree_center
+        direction_norm = hypot(direction[1], direction[2])
+        unit_direction = iszero(direction_norm) ? Point2f(1, 0) : direction / direction_norm
+        push!(rays, (clade_center, unit_direction))
+    end
+    return rays
+end
+
+function _ray_circle_intersection(ray_origin, ray_direction, center, radius)
+    relative_origin = ray_origin - center
+    projection = relative_origin[1] * ray_direction[1] + relative_origin[2] * ray_direction[2]
+    discriminant = max(
+        projection^2 + radius^2 - relative_origin[1]^2 - relative_origin[2]^2,
+        0.0f0,
+    )
+    ray_distance = -projection + sqrt(discriminant)
+    return ray_origin + ray_distance * ray_direction
+end
+
+function _unrooted_clade_label_geometry(
+        points,
+        rays,
+        clade_center,
+        lineoffset,
+        linepadding,
+        lineresolution,
+        labelrotation,
+    )
+    clade_radius = maximum(points) do point
+        hypot(point[1] - clade_center[1], point[2] - clade_center[2])
+    end
+    radius_tolerance = sqrt(eps(Float32)) * max(Float32(clade_radius), 1.0f0)
+    line_radius = max(Float32(clade_radius + lineoffset), Float32(clade_radius) + radius_tolerance)
+    boundary_points = Point2f[
+        _ray_circle_intersection(ray_origin, ray_direction, clade_center, line_radius) for
+            (ray_origin, ray_direction) in rays
+    ]
+
+    start_angle, angular_width = _minimum_angular_span(boundary_points, clade_center)
+    angular_padding = Float32(linepadding / line_radius)
+    start_angle -= angular_padding
+    angular_width = max(angular_width + 2.0f0 * angular_padding, 0.0f0)
+    stop_angle = start_angle + angular_width
+
+    line_points = Point2f[
+        clade_center + line_radius * Point2f(cos(angle), sin(angle)) for
+            angle in range(start_angle, stop_angle; length = lineresolution)
+    ]
+    push!(line_points, Point2f(NaN, NaN))
+
+    label_angle = start_angle + angular_width / 2.0f0
+    label_position =
+        clade_center + line_radius * Point2f(cos(label_angle), sin(label_angle))
+    rotation = mod(
+        Float32(label_angle + labelrotation) + Float32(π) / 2,
+        Float32(π),
+    ) - Float32(π) / 2
+    return line_points, label_position, rotation
+end
+
 # I think this covers the main ways of calling the functions with a treeplot directly
-treecladelabel!(plt::TreePlot; kwargs...) = treecladelabel!(plt.nodepoints; kwargs...)
-treecladelabel(plt::TreePlot; kwargs...) = treecladelabel(plt.nodepoints; kwargs...)
+_treecladelabel_kwargs(plt::TreePlot) = (;
+    branchsegments = plt.branchsegments,
+    tree = plt.tree,
+    treelayoutstyle = plt.layoutstyle,
+)
+treecladelabel!(plt::TreePlot; kwargs...) =
+    treecladelabel!(plt.nodepoints; _treecladelabel_kwargs(plt)..., kwargs...)
+treecladelabel(plt::TreePlot; kwargs...) =
+    treecladelabel(plt.nodepoints; _treecladelabel_kwargs(plt)..., kwargs...)
 treecladelabel!(ax::Union{Makie.Block,Makie.GridPosition}, plt::TreePlot; kwargs...) =
-    treecladelabel!(ax, plt.nodepoints; kwargs...)
+    treecladelabel!(ax, plt.nodepoints; _treecladelabel_kwargs(plt)..., kwargs...)
 treecladelabel(ax::Union{Makie.Block,Makie.GridPosition}, plt::TreePlot; kwargs...) =
-    treecladelabel(ax, plt.nodepoints; kwargs...)
+    treecladelabel(ax, plt.nodepoints; _treecladelabel_kwargs(plt)..., kwargs...)
 function Makie.plot!(plt::TreeCladeLabel)
     inputs = [
         :nodepoints,
+        :branchsegments,
+        :tree,
+        :treelayoutstyle,
         :cladelabels,
         :lineoffset,
         :linepadding,
@@ -782,12 +921,24 @@ function Makie.plot!(plt::TreeCladeLabel)
         plt.attributes,
         inputs,
         [:line_points, :label_position, :label_text, :rotation],
-    ) do nodepoints, cladelabels, lineoffset, linepadding, lineresolution, labelrotation, tf
+    ) do nodepoints,
+    branchsegments,
+    tree,
+    treelayoutstyle,
+    cladelabels,
+    lineoffset,
+    linepadding,
+    lineresolution,
+    labelrotation,
+    tf
+        is_unrooted = treelayoutstyle in BasicTreePlots.UNROOTED_LAYOUTS
+        if isnothing(tree)
+            tree = is_unrooted ? first(keys(nodepoints)) : first(last(nodepoints))
+        end
 
         ## Default to labeling whole tree
         cladelabels = if isnothing(cladelabels)
-            root = first(last(nodepoints))
-            [root => BasicTreePlots.label(root)]
+            [tree => BasicTreePlots.label(tree)]
         else
             cladelabels
         end
@@ -798,6 +949,22 @@ function Makie.plot!(plt::TreeCladeLabel)
         ## For each clade => cladelabel
         line_points, label_positions, labels, rotation =
             map(zip(collect(cladelabels), lineoffset)) do ((node, label), loff)
+                if is_unrooted
+                    points = _unrooted_clade_geometry(nodepoints, branchsegments, tree, node)
+                    rays = _terminal_branch_rays(nodepoints, branchsegments, tree, node)
+                    line_points, label_position, rotation =
+                        _unrooted_clade_label_geometry(
+                            points,
+                            rays,
+                            nodepoints[node],
+                            loff,
+                            linepadding,
+                            lineresolution,
+                            labelrotation,
+                        )
+                    return line_points, label_position, label, rotation
+                end
+
                 ## Get bounding box coordinates
                 amin, amax = extrema(n -> first(nodepoints[n]), PreOrderDFS(node))
                 bmin, bmax = extrema(n -> last(nodepoints[n]), PreOrderDFS(node))
