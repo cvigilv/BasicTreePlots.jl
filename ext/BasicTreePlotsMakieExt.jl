@@ -457,7 +457,7 @@ function Makie.plot!(plt::TreeLabels)
         ],
         [:label_points, :labels, :align, :rotation, :offset, :guides_points], # outputs
     ) do nodepoints, nodelabels, depth, lalign, lrotation, loffset, torientation, tf, tree, treelayoutstyle
-        is_unrooted = treelayoutstyle in (:unrooted_dendrogram, :unrooted_cladogram)
+        is_unrooted = treelayoutstyle in BasicTreePlots.UNROOTED_LAYOUTS
 
         ## Build parent lookup for computing branch angles (unrooted layouts only)
         parent_of = Dict()
@@ -500,6 +500,45 @@ function Makie.plot!(plt::TreeLabels)
             nothing
         end
 
+        root_position = is_unrooted && !isnothing(tree) ? nodepoints[tree] : nothing
+
+        function unrooted_label_endpoint(position, branch_angle, radius)
+            root_x, root_y = root_position
+            relative_x = position[1] - root_x
+            relative_y = position[2] - root_y
+            direction_x = cos(branch_angle)
+            direction_y = sin(branch_angle)
+            projection = relative_x * direction_x + relative_y * direction_y
+
+            if projection < 0.0f0
+                norm = hypot(relative_x, relative_y)
+                if !iszero(norm)
+                    direction_x = relative_x / norm
+                    direction_y = relative_y / norm
+                    projection = norm
+                end
+            end
+
+            perpendicular_squared =
+                relative_x^2 + relative_y^2 - projection^2
+            discriminant = radius^2 - max(perpendicular_squared, 0.0f0)
+            if discriminant < 0.0f0
+                norm = hypot(relative_x, relative_y)
+                iszero(norm) && return Point2f(root_x + radius, root_y)
+                scale = radius / norm
+                return Point2f(
+                    root_x + relative_x * scale,
+                    root_y + relative_y * scale,
+                )
+            end
+
+            extension = -projection + sqrt(discriminant)
+            return Point2f(
+                position[1] + extension * direction_x,
+                position[2] + extension * direction_y,
+            )
+        end
+
         ## Lines from each tip to max tip depth
         guides_points = Point2f[]
         if !isnothing(depth)
@@ -508,6 +547,12 @@ function Makie.plot!(plt::TreeLabels)
                     if tf isa Polar
                         maxdepth = maximum(x -> x[2], values(nodepoints))
                         map(pos -> Point2f(pos[1], maxdepth), label_points_start)
+                    elseif is_unrooted && !isnothing(branch_angles)
+                        root_x, root_y = root_position
+                        maxdepth = maximum(values(nodepoints)) do (x, y)
+                            hypot(x - root_x, y - root_y)
+                        end
+                        map(unrooted_label_endpoint, label_points_start, branch_angles, Iterators.repeated(maxdepth))
                     else
                         maxdepth = maximum(x -> x[1], values(nodepoints))
                         map(pos -> Point2f(maxdepth, pos[2]), label_points_start)
@@ -515,6 +560,8 @@ function Makie.plot!(plt::TreeLabels)
                 elseif depth isa Real
                     if tf isa Polar
                         map(pos -> Point2f(pos[1], depth), label_points_start)
+                    elseif is_unrooted && !isnothing(branch_angles)
+                        map(unrooted_label_endpoint, label_points_start, branch_angles, Iterators.repeated(Float32(depth)))
                     else
                         map(pos -> Point2f(depth, pos[2]), label_points_start)
                     end
@@ -561,7 +608,14 @@ function Makie.plot!(plt::TreeLabels)
                 rotation=0.0f0
             end
         elseif lrot === :radial
-            rotation = map(pos -> pos[1], label_points)
+            if is_unrooted && !isnothing(root_position)
+                root_x, root_y = root_position
+                rotation = map(label_points) do pos
+                    Float32(atan(pos[2] - root_y, pos[1] - root_x))
+                end
+            else
+                rotation = map(pos -> pos[1], label_points)
+            end
         elseif lrot === :aligned
             if is_unrooted && !isnothing(branch_angles)
                 # Align with branch angle, flip text on left half so it reads left-to-right
