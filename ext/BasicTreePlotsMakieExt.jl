@@ -761,7 +761,12 @@ fig
     "Offset of the text label away from anchor point in pixel space"
     labeloffset = @inherit offset (5.0f0, 0.0f0)
     labelalign = @inherit align (:center, :top)
-    labelrotation = @inherit rotation pi/2
+    """
+    Text rotation in radians. For unrooted layouts, this is relative to the radial direction:
+    `0` is radial and `pi / 2` is tangent to the clade arc. The full angle is preserved, so
+    values separated by `pi` can be used to choose which way the text faces.
+    """
+    labelrotation = @inherit rotation pi / 2
 
     # Options for both
     color = @inherit color (:black, 1.0f0)
@@ -883,10 +888,13 @@ function _unrooted_clade_label_geometry(
     label_angle = start_angle + angular_width / 2.0f0
     label_position =
         clade_center + line_radius * Point2f(cos(label_angle), sin(label_angle))
-    rotation = mod(
-        Float32(label_angle + labelrotation) + Float32(π) / 2,
-        Float32(π),
-    ) - Float32(π) / 2
+    # Normalize only the automatic tangent angle. Apply the user's offset afterward
+    # so the default stays upright and explicit rotations can reverse the text.
+    half_turn = Float32(π)
+    quarter_turn = half_turn / 2
+    upright_tangent_rotation =
+        mod(Float32(label_angle) + half_turn, half_turn) - quarter_turn
+    rotation = upright_tangent_rotation + Float32(labelrotation) - quarter_turn
     return line_points, label_position, rotation
 end
 
