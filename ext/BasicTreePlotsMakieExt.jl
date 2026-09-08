@@ -83,6 +83,11 @@ This can then be annotated with `treehilight`, `treelabels`, and `treecladelabel
     layoutstyle = :dendrogram
 
     """
+    Counterclockwise rotation of unrooted and daylight layouts in radians. Ignored for rooted layouts.
+    """
+    rotation = 0.0f0
+
+    """
     Can be either a single color `:black`, color plus alpha transperency `(:black, 0.5)`,
     or a vector of numbers for each node in pre-walk order.
     color for each node is associated to the line connecting it to its parent.
@@ -146,6 +151,7 @@ function Makie.plot!(plt::TreePlot)
         :tree,
         :showroot,
         :layoutstyle,
+        :rotation,
         :leafoffset,
         :branchstyle,
         :branchpointresolution,
@@ -163,6 +169,7 @@ function Makie.plot!(plt::TreePlot)
     ) do tree,
     showroot,
     layoutstyle,
+    rotation,
     leafoffset,
     branchstyle,
     resolution,
@@ -184,6 +191,10 @@ function Makie.plot!(plt::TreePlot)
 
 
         is_unrooted = layoutstyle in BasicTreePlots.UNROOTED_LAYOUTS
+        if is_unrooted && !iszero(rotation)
+            BasicTreePlots.rotate_component!(nodepoints, tree, PreOrderDFS(tree), rotation)
+        end
+
         maxtreedepth = if is_unrooted
             root_x, root_y = nodepoints[tree]
             maximum(values(nodepoints)) do (x, y)
