@@ -31,7 +31,7 @@ function test_label_plots!(tree_plot, tree, rotation_inputs)
 end
 
 tree = ((:a, :b), (:c, :d))
-rotation_inputs = Float32[0, π / 2, π, 3π / 2, 2π]
+rotation_inputs = Float32[0, π/2, π, 3π/2, 2π]
 axis_layouts = (:dendrogram, :cladogram, BasicTreePlots.UNROOTED_LAYOUTS...)
 
 for layoutstyle in axis_layouts
@@ -56,11 +56,8 @@ figure = Figure()
 axis = Axis(figure[1, 1])
 tree_plot = treeplot!(axis, tree; layoutstyle = :unrooted_cladogram)
 per_label_rotations = Float32[0, π]
-node_labels = treelabels!(
-    tree_plot;
-    nodelabels = [:a => "a", :b => "b"],
-    labelrotation = per_label_rotations,
-)
+node_labels =
+    treelabels!(tree_plot; nodelabels = [:a => "a", :b => "b"], labelrotation = per_label_rotations)
 @test node_labels.rotation[] == per_label_rotations
 node_labels.labelrotation[] = per_label_rotations .+ 2π
 @test node_labels.rotation[] ≈ per_label_rotations .+ 2π

@@ -3,10 +3,8 @@ using AbstractTrees: PreOrderDFS, children
 
 CairoMakie.activate!()
 
-rotate_point((x, y), angle) = Point2f(
-    cos(angle) * x - sin(angle) * y,
-    sin(angle) * x + cos(angle) * y,
-)
+rotate_point((x, y), angle) =
+    Point2f(cos(angle) * x - sin(angle) * y, sin(angle) * x + cos(angle) * y)
 
 tree = ((:a, :b), (:c, :d))
 rotation = Float32(π / 3)
@@ -23,7 +21,8 @@ for layoutstyle in BasicTreePlots.UNROOTED_LAYOUTS
             @test tree_plot.nodepoints[][node] ≈ rotate_point(unrotated[node], rotation)
         end
 
-        parent_of = Dict(child => parent for parent in PreOrderDFS(tree) for child in children(parent))
+        parent_of =
+            Dict(child => parent for parent in PreOrderDFS(tree) for child in children(parent))
         for (node, segment) in zip(PreOrderDFS(tree), tree_plot.branchsegments[])
             node == tree && continue
             @test Point2f(segment[1]) ≈ tree_plot.nodepoints[][parent_of[node]]
@@ -47,10 +46,8 @@ end
 
     @test node_scatter[1][] == tree_plot.orderedpoints[]
     @test only(node_labels.label_points[]) == tree_plot.nodepoints[][:a]
-    @test only(clade_label.label_position[]) ≈ rotate_point(
-        old_clade_label_position,
-        tree_plot.rotation[],
-    )
+    @test only(clade_label.label_position[]) ≈
+          rotate_point(old_clade_label_position, tree_plot.rotation[])
     @test clade_highlight.clade_regions[] != old_highlight
 end
 

@@ -17,12 +17,8 @@ const LAYOUTS = (
     :daylight_dendrogram,
     :daylight_cladogram,
 )
-const UNROOTED_LAYOUTS = (
-    :unrooted_dendrogram,
-    :unrooted_cladogram,
-    :daylight_dendrogram,
-    :daylight_cladogram,
-)
+const UNROOTED_LAYOUTS =
+    (:unrooted_dendrogram, :unrooted_cladogram, :daylight_dendrogram, :daylight_cladogram)
 const BRANCHTYPES = (:square, :straight)
 
 export treeplot,
@@ -148,20 +144,20 @@ end
 
 
 function nodepositions(tree; kwargs...)
-    nodedict = OrderedDict{Any, Tuple{Float32, Float32}}()
+    nodedict = OrderedDict{Any,Tuple{Float32,Float32}}()
     return nodepositions!(nodedict, tree; kwargs...)
 end
 function nodepositions(coordtype::Type, tree; kwargs...)
-    nodedict = OrderedDict{Any, coordtype}()
+    nodedict = OrderedDict{Any,coordtype}()
     return nodepositions!(nodedict, tree; kwargs...)
 end
 function nodepositions!(
-        nodedict,
-        tree;
-        showroot = false,
-        layoutstyle = :dendrogram,
-        nodeoffset = 0.0f0,
-    )
+    nodedict,
+    tree;
+    showroot = false,
+    layoutstyle = :dendrogram,
+    nodeoffset = 0.0f0,
+)
     currdepth = showroot ? distance(tree) : 0.0f0
     leafcount = [0.0f0 + nodeoffset]
     if layoutstyle == :dendrogram
@@ -282,7 +278,7 @@ function adjust_daylight!(
         components[node] = node_components
     end
 
-    for _ in 1:max_iterations
+    for _ = 1:max_iterations
         total_change = 0.0f0
         changed_nodes = 0
         for node in internal_nodes
@@ -296,14 +292,12 @@ function adjust_daylight!(
             daylight = (2.0f0 * Float32(π) - sum(widths)) / length(arcs)
             desired_start = first(arcs[order[begin]])
             max_change = 0.0f0
-            for order_index in 2:length(order)
-                previous = order[order_index - 1]
+            for order_index = 2:length(order)
+                previous = order[order_index-1]
                 current = order[order_index]
                 desired_start += widths[previous] + daylight
                 raw_adjustment = desired_start - first(arcs[current])
-                adjustment = mod(
-                    raw_adjustment + Float32(π), 2.0f0 * Float32(π)
-                ) - Float32(π)
+                adjustment = mod(raw_adjustment + Float32(π), 2.0f0 * Float32(π)) - Float32(π)
                 rotate_component!(nodedict, node, node_components[current], adjustment)
                 max_change = max(max_change, abs(adjustment))
             end
@@ -340,7 +334,7 @@ function daylight_arc(nodedict, origin, component)
     largest_gap = -1.0f0
     gap_index = 0
     for i in eachindex(angles)
-        next_angle = i == lastindex(angles) ? first(angles) + 2.0f0 * Float32(π) : angles[i + 1]
+        next_angle = i == lastindex(angles) ? first(angles) + 2.0f0 * Float32(π) : angles[i+1]
         gap = next_angle - angles[i]
         if gap > largest_gap
             largest_gap = gap
@@ -361,10 +355,8 @@ function rotate_component!(nodedict, pivot, component, angle)
         x, y = nodedict[node]
         dx = x - px
         dy = y - py
-        nodedict[node] = (
-            Float32(cosine * dx - sine * dy + px),
-            Float32(sine * dx + cosine * dy + py),
-        )
+        nodedict[node] =
+            (Float32(cosine * dx - sine * dy + px), Float32(sine * dx + cosine * dy + py))
     end
     return nodedict
 end
@@ -381,8 +373,14 @@ function extend_tips!(nodecoords)
 end
 
 
-function makesegments(nodedict, tree; resolution = 25, branchstyle = :square, layoutstyle = :dendrogram)
-    segs = Vector{Vector{Tuple{Float32, Float32}}}()
+function makesegments(
+    nodedict,
+    tree;
+    resolution = 25,
+    branchstyle = :square,
+    layoutstyle = :dendrogram,
+)
+    segs = Vector{Vector{Tuple{Float32,Float32}}}()
     if layoutstyle in UNROOTED_LAYOUTS
         make_unrooted_segments!(segs, nodedict, tree)
     elseif branchstyle == :square
